@@ -13,8 +13,23 @@ interface Todo {
   dueDate: string;
   category: string;
   priority: Priority;
+  notifyBefore: number; // 分単位
   notified: boolean;
 }
+
+const NOTIFY_OPTIONS = [
+  { value: 0,     label: "期日ちょうど" },
+  { value: 15,    label: "15分前" },
+  { value: 30,    label: "30分前" },
+  { value: 60,    label: "1時間前" },
+  { value: 120,   label: "2時間前" },
+  { value: 180,   label: "3時間前" },
+  { value: 360,   label: "6時間前" },
+  { value: 720,   label: "12時間前" },
+  { value: 1440,  label: "1日前" },
+  { value: 2880,  label: "2日前" },
+  { value: 10080, label: "1週間前" },
+];
 
 const PRIORITY_LABEL: Record<Priority, string> = { high: "高", medium: "中", low: "低" };
 const PRIORITY_COLOR: Record<Priority, string> = {
@@ -35,6 +50,7 @@ export default function TodoApp() {
   const [inputDueDate, setInputDueDate] = useState("");
   const [inputCategory, setInputCategory] = useState("");
   const [inputPriority, setInputPriority] = useState<Priority>("medium");
+  const [inputNotifyBefore, setInputNotifyBefore] = useState(60);
   const [newCatInput, setNewCatInput] = useState("");
 
   // Filters
@@ -73,26 +89,29 @@ export default function TodoApp() {
     if (!hydrated) return;
     const check = async () => {
       const now = Date.now();
-      const SIXTY_MIN = 60 * 60 * 1000;
       for (const todo of todos) {
         if (todo.completed || todo.notified || !todo.dueDate) continue;
         const due = new Date(todo.dueDate).getTime();
-        if (due - now <= SIXTY_MIN) {
-          const isOverdue = due < now;
-          // Browser notification
-          if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-            new Notification("ToDo リマインダー", {
-              body: isOverdue ? `⚠️ 期限超過: ${todo.text}` : `⏰ 期限60分前: ${todo.text}`,
-            });
-          }
-          // LINE notification
-          await fetch("/api/notify", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: todo.text, dueDate: todo.dueDate, isOverdue }),
-          }).catch(() => {});
-          setTodos((prev) => prev.map((t) => t.id === todo.id ? { ...t, notified: true } : t));
+        const notifyAt = due - todo.notifyBefore * 60_000;
+        if (now < notifyAt) continue;
+        const isOverdue = due < now;
+        const notifyLabel =
+          NOTIFY_OPTIONS.find((o) => o.value === todo.notifyBefore)?.label ??
+          `${todo.notifyBefore}分前`;
+        const body = isOverdue
+          ? `⚠️ 期限超過: ${todo.text}`
+          : `⏰ ${notifyLabel}のお知らせ: ${todo.text}`;
+        // Browser notification
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+          new Notification("ToDo リマインダー", { body });
         }
+        // LINE notification
+        await fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: todo.text, dueDate: todo.dueDate, isOverdue, notifyLabel }),
+        }).catch(() => {});
+        setTodos((prev) => prev.map((t) => t.id === todo.id ? { ...t, notified: true } : t));
       }
     };
     check();
@@ -112,6 +131,7 @@ export default function TodoApp() {
         dueDate: inputDueDate,
         category: inputCategory,
         priority: inputPriority,
+        notifyBefore: inputNotifyBefore,
         notified: false,
       },
       ...prev,
@@ -202,7 +222,7 @@ export default function TodoApp() {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">期日・時刻</label>
               <input
@@ -211,6 +231,19 @@ export default function TodoApp() {
                 onChange={(e) => setInputDueDate(e.target.value)}
                 className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 px-3 py-2 text-xs text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-400 transition"
               />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">LINE 通知タイミング</label>
+              <select
+                value={inputNotifyBefore}
+                onChange={(e) => setInputNotifyBefore(Number(e.target.value))}
+                disabled={!inputDueDate}
+                className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 px-3 py-2 text-xs text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-400 transition disabled:opacity-40"
+              >
+                {NOTIFY_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">カテゴリ</label>
@@ -373,6 +406,11 @@ export default function TodoApp() {
                         {due && (
                           <span className={`text-xs ${due.overdue && !todo.completed ? "text-red-500 font-semibold" : "text-gray-400 dark:text-gray-500"}`}>
                             {due.overdue && !todo.completed ? "⚠️ 期限超過 " : "🕐 "}{due.label}
+                          </span>
+                        )}
+                        {todo.dueDate && !todo.notified && (
+                          <span className="text-xs text-indigo-400 dark:text-indigo-500">
+                            🔔 {NOTIFY_OPTIONS.find((o) => o.value === todo.notifyBefore)?.label ?? `${todo.notifyBefore}分前`}に通知
                           </span>
                         )}
                         {todo.notified && (
