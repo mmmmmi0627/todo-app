@@ -2,6 +2,16 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { searchJapanCities } from "./japanCities";
+import ComfortIndex from "./ComfortIndex";
+
+interface FavoriteCity {
+  name: string;
+  nameEn: string;
+  lat: number;
+  lon: number;
+}
+
+const FAVORITES_KEY = "weather_favorites";
 
 interface GeoSuggestion {
   name: string;
@@ -30,6 +40,7 @@ interface WeatherCondition {
 interface CurrentWeather {
   name: string;
   sys: { country: string };
+  coord: { lat: number; lon: number };
   main: WeatherMain;
   weather: WeatherCondition[];
   wind: { speed: number };
@@ -147,8 +158,38 @@ export default function WeatherApp() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<GeoSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [favorites, setFavorites] = useState<FavoriteCity[]>([]);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRef = useRef<HTMLDivElement>(null);
+
+  // Load favorites from localStorage
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(FAVORITES_KEY);
+      if (stored) setFavorites(JSON.parse(stored));
+    } catch {}
+  }, []);
+
+  const saveFavorites = (list: FavoriteCity[]) => {
+    setFavorites(list);
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(list));
+  };
+
+  const toggleFavorite = () => {
+    if (!data) return;
+    const city: FavoriteCity = {
+      name: data.resolvedCityName ?? data.current.name,
+      nameEn: data.current.name,
+      lat: data.current.coord.lat,
+      lon: data.current.coord.lon,
+    };
+    const exists = favorites.some((f) => f.name === city.name);
+    saveFavorites(exists ? favorites.filter((f) => f.name !== city.name) : [...favorites, city].slice(0, 5));
+  };
+
+  const isFavorited = data
+    ? favorites.some((f) => f.name === (data.resolvedCityName ?? data.current.name))
+    : false;
 
   // Fetch suggestions with debounce
   useEffect(() => {
@@ -202,9 +243,11 @@ export default function WeatherApp() {
   }, []);
 
   const fetchWeather = useCallback(async (params: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
     setLoading(true);
     setError(null);
     setSelectedDate(null);
+    setSuggestions([]);
     setShowSuggestions(false);
     try {
       const res = await fetch(`/api/weather?${params}`);
@@ -328,6 +371,24 @@ export default function WeatherApp() {
             </svg>
             現在地を使用
           </button>
+
+          {/* Favorites chips */}
+          {favorites.length > 0 && (
+            <div className="flex flex-wrap gap-2 pt-1">
+              {favorites.map((fav) => (
+                <button
+                  key={fav.name}
+                  onClick={() => {
+                    setQuery(fav.name);
+                    fetchWeather(`lat=${fav.lat}&lon=${fav.lon}`);
+                  }}
+                  className="flex items-center gap-1 bg-white/20 hover:bg-white/30 text-white text-xs font-medium px-3 py-1.5 rounded-full transition"
+                >
+                  ⭐ {fav.name}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Loading */}
@@ -349,7 +410,16 @@ export default function WeatherApp() {
         {data && !loading && (
           <>
             <div className="bg-white/20 backdrop-blur-sm rounded-2xl p-5 text-white">
-              <p className="text-sm font-medium opacity-80 mb-1">{cityDisplay}</p>
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-sm font-medium opacity-80">{cityDisplay}</p>
+                <button
+                  onClick={toggleFavorite}
+                  title={isFavorited ? "お気に入りから削除" : "お気に入りに追加"}
+                  className="text-xl leading-none hover:scale-125 transition-transform"
+                >
+                  {isFavorited ? "⭐" : "☆"}
+                </button>
+              </div>
               <div className="flex items-center justify-between">
                 <div>
                   <div className="flex items-end gap-1">
@@ -371,6 +441,9 @@ export default function WeatherApp() {
                 <StatItem icon="☁️" label="雲量" value={`${data.current.clouds.all}%`} />
               </div>
             </div>
+
+            {/* Comfort Index */}
+            <ComfortIndex todayItems={dayGroups[0]?.items ?? []} />
 
             {/* Weekly Forecast Calendar */}
             <div className="bg-white/20 backdrop-blur-sm rounded-2xl p-4">
